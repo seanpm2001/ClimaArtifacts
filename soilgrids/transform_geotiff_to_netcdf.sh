@@ -16,7 +16,7 @@ for file in "$SRC_DIR"/*.tif; do
   output_file="$DEST_DIR/${base_name}.nc"
   
   # Convert the GeoTIFF file to NetCDF format
-  gdal_translate -of netCDF "$file" "$output_file"
+  gdal_translate -ot Int16 -of netCDF "$file" "$output_file"
   
   echo "Converted $file to $output_file"
 done

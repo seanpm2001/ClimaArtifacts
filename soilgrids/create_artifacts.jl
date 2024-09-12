@@ -24,9 +24,9 @@ using NCDatasets
 using Statistics
 using ClimaArtifactsHelper
 
-filedir = missing
+filedir = "soilgrids_nc/"
 
-outputdir = "soil_artifacts"
+outputdir = "soilgrids_artifacts"
 if isdir(outputdir)
     @warn "$outputdir already exists. Content will end up in the artifact and may be overwritten."
     @warn "Abort this calculation, unless you know what you are doing."
@@ -36,97 +36,98 @@ end
 
 include("utils.jl")
 # Parameters specific to this data
-z = [-1.0, -0.6, -0.3, 0] # depth of soil layer
+z = [-1.5, -0.8, -0.45, -0.225, -0.1, -0.025] # depth of soil layer
+level_names = ["100-200cm","60-100cm","30-60cm","15-30cm","5-15cm","0-5cm"]
+vars = ["bdod","silt","sand","clay","cfvo","soc"] # varnames
+nvars = length(vars)
+attrib_bdod = (;
+    vartitle = "Dry bulk density",
+    varunits = "kg/m^3",
+    varname = "bdod",
+)
+transform_bdod(x) = x*1e-5*1e6 # how to convert to from cg/cm^3 to kg/m^3
+
+attrib_silt = (;
+    vartitle = "Mass fraction of silt",
+    varunits = "kg/kg",
+    varname = "silt")
+attrib_sand = (;
+    vartitle = "Mass fraction of sand",
+    varunits = "kg/kg",
+    varname = "sand")
+attrib_clay = (;
+    vartitle = "Mass fraction of clay",
+    varunits = "kg/kg",
+    varname = "clay")
+transform_comp(x) = x*1e-3 # how to convert to from g/kg to kg/kg
+
+attrib_cfvo = (;
+    vartitle = "Volumetric fraction of coarse fragments",
+    varunits = "m^3/m^3",
+    varname = "cfvo")
+transform_cfvo(x) = x*1e-3 # how to convert to from (cm/dm)^3 to (m/m)^3
+
+attrib_soc = (;
+    vartitle = "Mass fraction of soil organic carbon",
+    varunits = "kg/kg",
+    varname = "soc")
+transform_soc(x) = x * 1e-4 # how to convert to from dg/kg to kg/kg
+attribs = [attrib_bdod, attrib_silt, attrib_sand, attrib_clay, attrib_cfvo, attrib_soc]
+transforms = [transform_bdod, transform_comp, transform_comp, transform_comp, transform_cfvo, transform_soc]
 nlayers = length(z)
-lat_ct = 14937
-lon_ct = 36000
-data = Array{Union{Missing, Float32}}(missing, lon_ct, lat_ct, nlayers);
 
 # just pick one of the files to get lat and lon values
-file= joinpath(filedir, "Global_n_vG_parameter_1Km_s60....60cm_v1.0.nc")
+file= joinpath(filedir, "bdod_0-5cm_mean_5000.nc")
 nc_data = NCDatasets.NCDataset(file)
 lat = nc_data["lat"][:];
 lon = nc_data["lon"][:];
+lat_ct = length(lat)
+lon_ct = length(lon)
+data = Array{Union{Missing, Float32}}(missing, lon_ct, lat_ct, nlayers);
 
-# Simulation Resolution
-resolution = 1.0
-
-# Function which reads in the data, regrids to the simulation grid, writes the file to the correct output location.
-function create_artifact(data, files, attrib, transform, outfilepath)
+# Function which reads in the data by layer and writes the file with all layers to the correct output location.
+function create_combined_data(data, files, attrib, transform, outfilepath)
     # get parameter values at each layer
     read_nc_data!(data, files, filedir)
-    outdata, outlat, outlon =
-        regrid(data, (lon, lat), resolution, transform, nlayers)
-    write_nc_out(outdata, outlat, outlon, z, attrib, outfilepath)
+    # Replace missing with NaN
+    data[typeof.(data) .== Missing] .= NaN
+    data .= transform(data)
+    write_nc_out(data, lat, lon, z, attrib, outfilepath)
     Base.mv(outfilepath, joinpath(outputdir, outfilepath))
 end
 
-# Process Ksat
-files = [
-    "Global_Ksat_1Km_s100....100cm_v1.0.nc",
-    "Global_Ksat_1Km_s60....60cm_v1.0.nc",
-    "Global_Ksat_1Km_s30....30cm_v1.0.nc",
-    "Global_Ksat_1Km_s0....0cm_v1.0.nc",
-]
-transform(x) = 10^x / (100 * 24 * 3600) # how to convert to units the simulation needs
-outfilepath = "ksat_map_gupta_etal2020_$(resolution)x$(resolution)x$(nlayers).nc"
-attrib = (;
-    vartitle = "Saturated Hydraulic Conductivity",
-    varunits = "m/s",
-    varname = "Ksat",
-)
-create_artifact(data, files, attrib, transform, outfilepath)
+for i in 1:nvars
+    var = vars[i]
+    attrib = attribs[i]
+    transform = transforms[i]
+    files = ["$(var)_$(ln)_mean_5000.nc" for ln in level_names]
+    outfilepath = "$(var)_soilgrids_combined.nc"
+    create_combined_data(data, files, attrib, transform, outfilepath)
+end
 
-# Process Porosity
-files = [
-    "Global_thetas_vG_parameter_1Km_s100....100cm_v1.0.nc",
-    "Global_thetas_vG_parameter_1Km_s60....60cm_v1.0.nc",
-    "Global_thetas_vG_parameter_1Km_s30....30cm_v1.0.nc",
-    "Global_thetas_vG_parameter_1Km_s0....0cm_v1.0.nc",
-]
-transform(x) = x # how to convert to units the simulation needs
-outfilepath = "porosity_map_gupta_etal2020_$(resolution)x$(resolution)x$(nlayers).nc"
-attrib = (; vartitle = "Porosity", varunits = "m^3/m^3", varname = "ν")
-create_artifact(data, files, attrib, transform, outfilepath)
+# Particle density
+ρ_silt = 2.65*1e3 # convert from g/cm^3 to kg/m^3
+ρ_clay = ρ_silt
+ρ_sand = 2.66*1e3 # convert from g/cm^3 to kg/m^3
+ρ_om = 1.3*1e3 # convert from g/cm^3 to kg/m^3
+# Check
+density = NCDataset("soilgrids_artifacts/bdod_soilgrids_combined.nc");
+ρ_bulk = density["bdod"][:,:,:]
+silt = NCDataset("soilgrids_artifacts/silt_soilgrids_combined.nc");
+q_silt = silt["silt"][:,:,:]
+θ_silt = q_silt ./ ρ_silt .* ρ_bulk;
+clay = NCDataset("soilgrids_artifacts/clay_soilgrids_combined.nc");
+q_clay = clay["clay"][:,:,:]
+θ_clay = q_clay ./ ρ_clay .* ρ_bulk
+sand = NCDataset("soilgrids_artifacts/sand_soilgrids_combined.nc");
+q_sand = sand["sand"][:,:,:]
+θ_sand = q_sand ./ ρ_sand .* ρ_bulk
+cf = NCDataset("soilgrids_artifacts/cfvo_soilgrids_combined.nc");
+θ_cf = cf["cfvo"][:,:,:]
+soc = NCDataset("soilgrids_artifacts/soc_soilgrids_combined.nc");
+q_soc = soc["soc"][:,:,:]
+θ_om = q_soc ./ ρ_om .* ρ_bulk
 
-# Process Residual Water Fraction
-files = [
-    "Global_thetar_vG_parameter_1Km_s100....100cm_v1.0.nc",
-    "Global_thetar_vG_parameter_1Km_s60....60cm_v1.0.nc",
-    "Global_thetar_vG_parameter_1Km_s30....30cm_v1.0.nc",
-    "Global_thetar_vG_parameter_1Km_s0....0cm_v1.0.nc",
-]
-transform(x) = x # how to convert to units the simulation needs
-outfilepath = "residual_map_gupta_etal2020_$(resolution)x$(resolution)x$(nlayers).nc"
-attrib = (;
-    vartitle = "Residual water fraction",
-    varunits = "m^3/m^3",
-    varname = "θ_r",
-)
-create_artifact(data, files, attrib, transform, outfilepath)
-
-# Process van Genuchten alpha
-files = [
-    "Global_alpha_vG_parameter_1Km_s100....100cm_v1.0.nc",
-    "Global_alpha_vG_parameter_1Km_s60....60cm_v1.0.nc",
-    "Global_alpha_vG_parameter_1Km_s30....30cm_v1.0.nc",
-    "Global_alpha_vG_parameter_1Km_s0....0cm_v1.0.nc",
-]
-transform(x) = 10^x# how to convert to units the simulation needs
-outfilepath = "vGalpha_map_gupta_etal2020_$(resolution)x$(resolution)x$(nlayers).nc"
-attrib = (; vartitle = "van Genuchten α", varunits = "1/m", varname = "α")
-create_artifact(data, files, attrib, transform, outfilepath)
-
-# Process van Genuchten n
-files = [
-    "Global_n_vG_parameter_1Km_s100....100cm_v1.0.nc",
-    "Global_n_vG_parameter_1Km_s60....60cm_v1.0.nc",
-    "Global_n_vG_parameter_1Km_s30....30cm_v1.0.nc",
-    "Global_n_vG_parameter_1Km_s0....0cm_v1.0.nc",
-]
-transform(x) = 10^x # how to convert to units the simulation needs
-outfilepath = "vGn_map_gupta_etal2020_$(resolution)x$(resolution)x$(nlayers).nc"
-attrib = (; vartitle = "van Genuchten n", varunits = "unitless", varname = "n")
-create_artifact(data, files, attrib, transform, outfilepath)
+∑q = q_silt .+ q_sand .+ q_clay; # sums to 1 What do coarse fragments SOC count as?
 
 create_artifact_guided(outputdir; artifact_name = basename(@__DIR__))

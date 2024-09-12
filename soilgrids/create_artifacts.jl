@@ -41,24 +41,24 @@ level_names = ["100-200cm","60-100cm","30-60cm","15-30cm","5-15cm","0-5cm"]
 vars = ["bdod","silt","sand","clay","cfvo","soc"] # varnames
 nvars = length(vars)
 attrib_bdod = (;
-    vartitle = "Dry bulk density",
+    vartitle = "Dry bulk density of fine earth fraction",
     varunits = "kg/m^3",
     varname = "bdod",
 )
 transform_bdod(x) = x*1e-5*1e6 # how to convert to from cg/cm^3 to kg/m^3
 
 attrib_silt = (;
-    vartitle = "Mass fraction of silt",
+    vartitle = "Mass fraction of silt in the mineral part of the fine earth fraction of soil",
     varunits = "kg/kg",
-    varname = "silt")
+    varname = "Q_silt")
 attrib_sand = (;
-    vartitle = "Mass fraction of sand",
+    vartitle = "Mass fraction of sand in the mineral part of the fine earth fraction of soil",
     varunits = "kg/kg",
-    varname = "sand")
+    varname = "Q_sand")
 attrib_clay = (;
-    vartitle = "Mass fraction of clay",
+    vartitle = "Mass fraction of clay in the mineral part of the fine earth fraction of soil",
     varunits = "kg/kg",
-    varname = "clay")
+    varname = "Q_clay")
 transform_comp(x) = x*1e-3 # how to convert to from g/kg to kg/kg
 
 attrib_cfvo = (;
@@ -68,9 +68,9 @@ attrib_cfvo = (;
 transform_cfvo(x) = x*1e-3 # how to convert to from (cm/dm)^3 to (m/m)^3
 
 attrib_soc = (;
-    vartitle = "Mass fraction of soil organic carbon",
+    vartitle = "Mass fraction of soil organic carbon in the fine earth fraction of soil",
     varunits = "kg/kg",
-    varname = "soc")
+    varname = "q_soc")
 transform_soc(x) = x * 1e-4 # how to convert to from dg/kg to kg/kg
 attribs = [attrib_bdod, attrib_silt, attrib_sand, attrib_clay, attrib_cfvo, attrib_soc]
 transforms = [transform_bdod, transform_comp, transform_comp, transform_comp, transform_cfvo, transform_soc]
@@ -110,24 +110,42 @@ end
 ρ_clay = ρ_silt
 ρ_sand = 2.66*1e3 # convert from g/cm^3 to kg/m^3
 ρ_om = 1.3*1e3 # convert from g/cm^3 to kg/m^3
-# Check
-density = NCDataset("soilgrids_artifacts/bdod_soilgrids_combined.nc");
-ρ_bulk = density["bdod"][:,:,:]
-silt = NCDataset("soilgrids_artifacts/silt_soilgrids_combined.nc");
-q_silt = silt["silt"][:,:,:]
-θ_silt = q_silt ./ ρ_silt .* ρ_bulk;
-clay = NCDataset("soilgrids_artifacts/clay_soilgrids_combined.nc");
-q_clay = clay["clay"][:,:,:]
-θ_clay = q_clay ./ ρ_clay .* ρ_bulk
-sand = NCDataset("soilgrids_artifacts/sand_soilgrids_combined.nc");
-q_sand = sand["sand"][:,:,:]
-θ_sand = q_sand ./ ρ_sand .* ρ_bulk
-cf = NCDataset("soilgrids_artifacts/cfvo_soilgrids_combined.nc");
-θ_cf = cf["cfvo"][:,:,:]
+# Check - lower case q_i = mass of i/mass of fine earth
+#       - upper case Q_i = mass of i/mass of minerals in fine earth
+#        - fine earth - particles < 2mm, this includes SOC
+#        - coarse fragments - particles > 2mm
+# q_soc + q_min = 1 (fine earth mass fractions)
+# Q_i * (1-q_soc) = q_i (fine earth mass fraction of mineral i)
+# ∑Q = Q_silt .+ Q_sand .+ Q_clay; # sums to 1 
 soc = NCDataset("soilgrids_artifacts/soc_soilgrids_combined.nc");
-q_soc = soc["soc"][:,:,:]
-θ_om = q_soc ./ ρ_om .* ρ_bulk
+q_soc = soc["q_soc"][:,:,:]
+silt = NCDataset("soilgrids_artifacts/silt_soilgrids_combined.nc");
+q_silt = silt["Q_silt"][:,:,:] .* (1 .- q_soc)
+clay = NCDataset("soilgrids_artifacts/clay_soilgrids_combined.nc");
+q_clay = clay["Q_clay"][:,:,:].* (1 .- q_soc)
+sand = NCDataset("soilgrids_artifacts/sand_soilgrids_combined.nc");
+q_sand = sand["Q_sand"][:,:,:].* (1 .- q_soc)
+# Fine earth bulk density
+density = NCDataset("soilgrids_artifacts/bdod_soilgrids_combined.nc");
+ρ_bulk_fine_earth = density["bdod"][:,:,:] # Mass of fine earth/ Volume of fine earth including pores
 
-∑q = q_silt .+ q_sand .+ q_clay; # sums to 1 What do coarse fragments SOC count as?
+# Volumetric fractions relative to whole soil
+cf = NCDataset("soilgrids_artifacts/cfvo_soilgrids_combined.nc");
+θ_cf = cf["cfvo"][:,:,:] # volume of gravel/volume of whole soil
+θ_fine_earth = 1 .- θ_cf # volume of fine earth include pores/volume of whole soil
+θ_silt = @. q_silt / ρ_silt * ρ_bulk_fine_earth * θ_fine_earth;
+θ_clay = @. q_clay / ρ_clay * ρ_bulk_fine_earth * θ_fine_earth;
+θ_sand = @. q_sand / ρ_sand * ρ_bulk_fine_earth * θ_fine_earth;
+θ_om = @. q_soc / ρ_om * ρ_bulk_fine_earth * θ_fine_earth;
+
+check_extrema(x) = extrema(x[ .! isnan.(x)])
+#check_extrema(q_sand .+ q_soc .+ q_silt .+ q_clay), this works
+#check_extrema(θ_fine_earth .- (θ_sand .+ θ_om .+ θ_silt .+ θ_clay)) should equal porosity
+
+ρ_bulk_cf = ρ_silt; # Mass of gravel/volume of gravel
+# Bulk density of whole soil
+
+ρ_bulk_whole_soil = @. θ_fine_earth*ρ_bulk_fine_earth + θ_cf * ρ_bulk_cf
+
 
 create_artifact_guided(outputdir; artifact_name = basename(@__DIR__))

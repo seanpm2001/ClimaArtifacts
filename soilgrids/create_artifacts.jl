@@ -106,10 +106,9 @@ for i in 1:nvars
 end
 
 # Particle density
-ρ_silt = 2.65*1e3 # convert from g/cm^3 to kg/m^3
-ρ_clay = ρ_silt
-ρ_sand = 2.66*1e3 # convert from g/cm^3 to kg/m^3
-ρ_om = 1.3*1e3 # convert from g/cm^3 to kg/m^3
+ρp_min = 2.65*1e3 # convert from g/cm^3 to kg/m^3
+ρp_om = 1.3*1e3 # convert from g/cm^3 to kg/m^3
+ρp_cf = ρp_min # Guess
 # Check - lower case q_i = mass of i/mass of fine earth
 #       - upper case Q_i = mass of i/mass of minerals in fine earth
 #        - fine earth - particles < 2mm, this includes SOC
@@ -127,25 +126,30 @@ sand = NCDataset("soilgrids_artifacts/sand_soilgrids_combined.nc");
 q_sand = sand["Q_sand"][:,:,:].* (1 .- q_soc)
 # Fine earth bulk density
 density = NCDataset("soilgrids_artifacts/bdod_soilgrids_combined.nc");
-ρ_bulk_fine_earth = density["bdod"][:,:,:] # Mass of fine earth/ Volume of fine earth including pores
+ρ_bulk_fine_earth = density["bdod"][:,:,:] # Mass of fine earth/ Volume of whole soil
 
 # Volumetric fractions relative to whole soil
 cf = NCDataset("soilgrids_artifacts/cfvo_soilgrids_combined.nc");
 θ_cf = cf["cfvo"][:,:,:] # volume of gravel/volume of whole soil
-θ_fine_earth = 1 .- θ_cf # volume of fine earth include pores/volume of whole soil
-θ_silt = @. q_silt / ρ_silt * ρ_bulk_fine_earth * θ_fine_earth;
-θ_clay = @. q_clay / ρ_clay * ρ_bulk_fine_earth * θ_fine_earth;
-θ_sand = @. q_sand / ρ_sand * ρ_bulk_fine_earth * θ_fine_earth;
-θ_om = @. q_soc / ρ_om * ρ_bulk_fine_earth * θ_fine_earth;
+θ_silt = @. q_silt / ρp_min * ρ_bulk_fine_earth;
+θ_clay = @. q_clay / ρp_min * ρ_bulk_fine_earth;
+θ_sand = @. q_sand / ρp_min * ρ_bulk_fine_earth;
+θ_om = @. q_soc / ρp_om * ρ_bulk_fine_earth;
 
+# Sanity checks
 check_extrema(x) = extrema(x[ .! isnan.(x)])
-#check_extrema(q_sand .+ q_soc .+ q_silt .+ q_clay), this works
-#check_extrema(θ_fine_earth .- (θ_sand .+ θ_om .+ θ_silt .+ θ_clay)) should equal porosity
+check_extrema(q_sand .+ q_soc .+ q_silt .+ q_clay)# [1,1]
 
-ρ_bulk_cf = ρ_silt; # Mass of gravel/volume of gravel
-# Bulk density of whole soil
+θ_min = @. θ_silt + θ_clay + θ_sand
+ν_est = 1 .- (θ_cf .+ θ_min .+ θ_om)
+check_extrema(ν_est)
 
-ρ_bulk_whole_soil = @. θ_fine_earth*ρ_bulk_fine_earth + θ_cf * ρ_bulk_cf
+ρ_bulk_min = θ_min * ρp_min
+ρ_bulk_om = θ_om * ρp_om
+ρ_bulk_cf = θ_cf * ρp_cf
+ρ_bulk_soil = (1-θ_cf)*ρ_bulk_fine_earth + θ_cf * ρ_bulk_cf
+ν_formula = 1 .- ρ_bulk_soil * ()
+
 
 
 create_artifact_guided(outputdir; artifact_name = basename(@__DIR__))

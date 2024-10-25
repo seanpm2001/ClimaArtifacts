@@ -1,0 +1,6 @@
+[bonan_richards_eqn]
+git-tree-sha1 = "2086c00c4f88c55a5cf5266ca08179d5e962ae79"
+
+    [[bonan_richards_eqn.download]]
+    sha256 = "5500d1373a92c442255f01c5344b0f8c7e5a6dfaa5d11cfc5836733918c9c9d5"
+    url = "https://data.caltech.edu/records/asjw8-cd908/files/bonan_richards_eqn_artifact.tar.gz?download=1"
